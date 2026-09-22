@@ -158,9 +158,9 @@
     to{opacity:1;transform:none;filter:blur(0)}
   }
 
-  /* 幻灯片播放时的 Ken Burns 慢推 */
-  .lb-stage img.kb-playing{animation:lbKb 3.2s ease-in-out both}
-  @keyframes lbKb{from{transform:scale(1)}to{transform:scale(1.06) translateY(-1.5%)}}
+  /* 幻灯片播放时的 Ken Burns 慢推；在入场转场结束后启动 */
+  .lb-stage img.kb-playing{animation:none!important;transition:transform 2.6s ease-out;
+    transform:scale(1.06) translateY(-1.5%)}
 
   /* 播放进度条 */
   .lb-progress{position:absolute;bottom:0;left:0;height:3px;width:0;z-index:5;
@@ -386,7 +386,18 @@
       cur=0, timer=null, playing=false, dir=1;
 
   var TRANSITIONS = ['t-zoomIn','t-slideL','t-slideR','t-flipIn','t-dropIn','t-popBounce'];
-  var tIdx = 0;
+  var tIdx = 0, switchSeq = 0, preloadCache = {};
+
+  function preloadPhoto(i){
+    i=(i+PHOTOS.length)%PHOTOS.length;
+    if(preloadCache[i])return preloadCache[i];
+    var img=new Image(), src='photos/full/'+PHOTOS[i];
+    img.src=src;
+    preloadCache[i]=Promise.resolve(img.decode?img.decode():new Promise(function(resolve,reject){
+      img.onload=resolve; img.onerror=reject;
+    })).catch(function(){}).then(function(){return src;});
+    return preloadCache[i];
+  }
 
   // 生成粒子
   (function(){
@@ -413,7 +424,13 @@
     lbImg.classList.remove('t-open','kb-playing');
     void lbImg.offsetWidth;
     lbImg.classList.add(cls);
-    if(playing){ setTimeout(function(){ lbImg.classList.add('kb-playing'); },500); }
+    if(playing){
+      lbImg.addEventListener('animationend',function beginKenBurns(){
+        lbImg.classList.remove(cls);
+        void lbImg.offsetWidth;
+        if(playing)lbImg.classList.add('kb-playing');
+      },{once:true});
+    }
   }
 
   function pickTransition(){
@@ -424,14 +441,20 @@
   }
 
   function show(i){
-    cur=(i+PHOTOS.length)%PHOTOS.length;
-    var cls = pickTransition();
-    lbImg.src='photos/full/'+PHOTOS[cur];
-    applyTransition(cls);
-    lbCount.textContent=(cur+1)+' / '+PHOTOS.length;
-    films.forEach(function(f,idx){ f.classList.toggle('act',idx===cur); });
-    var act=films[cur]; if(act) act.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});
-    if(playing) resetProgress();
+    var next=(i+PHOTOS.length)%PHOTOS.length, seq=++switchSeq;
+    preloadPhoto(next).then(function(src){
+      if(seq!==switchSeq||!lb.classList.contains('open'))return;
+      cur=next;
+      var cls=pickTransition();
+      lbImg.src=src;
+      applyTransition(cls);
+      lbCount.textContent=(cur+1)+' / '+PHOTOS.length;
+      films.forEach(function(f,idx){f.classList.toggle('act',idx===cur);});
+      var act=films[cur];
+      if(act)act.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});
+      preloadPhoto(cur+1);
+      if(playing)resetProgress();
+    });
   }
 
   function morphImage(from,to,src,fromRadius,toRadius,duration,done){
@@ -468,7 +491,9 @@
         var from=sourceImg.getBoundingClientRect(),to=lbImg.getBoundingClientRect();
         var radius=getComputedStyle(sourceImg.parentElement).borderRadius||'0px';
         morphImage(from,to,sourceImg.src,radius,'10px',650,function(){
-          lbImg.classList.remove('zoom-hidden'); morphing=false;
+          lbImg.classList.remove('zoom-hidden');
+          preloadPhoto(cur+1);
+          morphing=false;
         });
       });});
     });
@@ -476,6 +501,7 @@
 
   function closeLb(){
     if(morphing)return;
+    switchSeq++;
     stopPlay();
     if(!activeSource){
       lb.classList.remove('shown','open'); lbImg.src=''; document.body.style.overflow=''; return;
@@ -501,9 +527,10 @@
 
   function startPlay(){
     playing=true; tIdx=0; lb.classList.add('playing');
+    preloadPhoto(cur+1);
     lbImg.classList.add('kb-playing');
     resetProgress();
-    timer=setInterval(function(){ dir=1; show(cur+1); }, SLIDE_DUR);
+    timer=setInterval(function(){dir=1;show(cur+1);},SLIDE_DUR);
     lbPlay.textContent='❚❚'; lbPlay.classList.add('on');
   }
 
